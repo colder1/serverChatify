@@ -6,17 +6,15 @@ import pg from 'pg';
 const app = express();
 const server = createServer(app);
 
-// 1. Configuración de Socket.io (CORS y Recuperación)
 const io = new Server(server, {
-  connectionStateRecovery: {}, 
+  connectionStateRecovery: {},
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: process.env.CLIENT_URL || "https://chatify-app-kappa.vercel.app",
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
-// 2. Conexión a PostgreSQL con SSL (Necesario para Railway)
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -24,57 +22,55 @@ const pool = new pg.Pool({
   }
 });
 
-// 3. Inicialización de la Base de Datos
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS messages (
-      id SERIAL PRIMARY KEY,
-      client_offset TEXT UNIQUE,
-      content TEXT
-  );
-`);
+const initDB = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+          id SERIAL PRIMARY KEY,
+          content TEXT
+      );
+    `);
+    console.log('DB Online');
+  } catch (err) {
+    console.error('DB Error:', err);
+  }
+};
+initDB();
 
 app.get('/', (req, res) => {
   res.send('<h1>Chatify Server Online</h1>');
 });
 
-// 4. Lógica de Socket.io
 io.on('connection', async (socket) => {
-  console.log('Cliente conectado:', socket.id);
-
-  if (!socket.recovered) {
-    try {
-      const result = await pool.query(
-        'SELECT id, content FROM messages WHERE id > $1 ORDER BY id',
-        [socket.handshake.auth.serverOffset || 0]
-      );
-      
-      for (const row of result.rows) {
-        socket.emit('chat message', row.content, row.id);
-      }
-    } catch (e) {
-      console.error('Error recuperando mensajes:', e);
-    }
+  try {
+    const offset = socket.handshake.auth.serverOffset || 0;
+    const result = await pool.query(
+      'SELECT id, content FROM messages WHERE id > $1 ORDER BY id ASC',
+      [offset]
+    );
+    result.rows.forEach(row => {
+      socket.emit('chat message', row.content, row.id);
+    });
+  } catch (e) {
+    console.error('History Error:', e);
   }
-  
+
   socket.on('chat message', async (msg) => {
+    if (!msg) return;
     try {
       const result = await pool.query(
         'INSERT INTO messages (content) VALUES ($1) RETURNING id',
         [msg]
       );
-      io.emit('chat message', msg, result.rows[0].id);
+      const lastId = result.rows[0].id;
+      io.emit('chat message', msg, lastId);
     } catch (e) {
-      console.error('Error insertando mensaje:', e);
+      console.error('Insert Error:', e);
     }
-  });
-
-  socket.on('disconnect', () => {
-    console.log('Cliente desconectado');
   });
 });
 
-// 5. UN SOLO LISTEN (Esto evita el error ERR_SERVER_ALREADY_LISTEN)
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
+  console.log(`Server on port ${PORT}`);
 });
