@@ -9,7 +9,7 @@ const server = createServer(app);
 const io = new Server(server, {
   connectionStateRecovery: {},
   cors: {
-    origin: process.env.CLIENT_URL || "https://chatify-app-kappa.vercel.app",
+    origin: process.env.CLIENT_URL || "https://chatify-ten-xi.vercel.app",
     methods: ['GET', 'POST'],
     credentials: true
   }
