@@ -1,13 +1,14 @@
 import express from 'express';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-import pg from 'pg'
+import pg from 'pg';
 
 const app = express();
 const server = createServer(app);
 
-
+// 1. Configuración de Socket.io (CORS y Recuperación)
 const io = new Server(server, {
+  connectionStateRecovery: {}, 
   cors: {
     origin: process.env.CLIENT_URL || 'http://localhost:5173',
     methods: ['GET', 'POST'],
@@ -15,11 +16,15 @@ const io = new Server(server, {
   }
 });
 
-// PostgreSQL connection
+// 2. Conexión a PostgreSQL con SSL (Necesario para Railway)
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
+// 3. Inicialización de la Base de Datos
 await pool.query(`
   CREATE TABLE IF NOT EXISTS messages (
       id SERIAL PRIMARY KEY,
@@ -28,14 +33,15 @@ await pool.query(`
   );
 `);
 
-
 app.get('/', (req, res) => {
-  res.send('<h1>Hola Mundo3</h1>');
+  res.send('<h1>Chatify Server Online</h1>');
 });
 
-io.on('connection', async(socket) => {
+// 4. Lógica de Socket.io
+io.on('connection', async (socket) => {
   console.log('Cliente conectado:', socket.id);
-    if (!socket.recovered) {
+
+  if (!socket.recovered) {
     try {
       const result = await pool.query(
         'SELECT id, content FROM messages WHERE id > $1 ORDER BY id',
@@ -46,43 +52,29 @@ io.on('connection', async(socket) => {
         socket.emit('chat message', row.content, row.id);
       }
     } catch (e) {
-      console.error('Error fetching messages:', e);
+      console.error('Error recuperando mensajes:', e);
     }
   }
   
- socket.on('chat message', async (msg) => {
-    console.log('message: ' + msg);
-    let result;
+  socket.on('chat message', async (msg) => {
     try {
-      result = await pool.query(
+      const result = await pool.query(
         'INSERT INTO messages (content) VALUES ($1) RETURNING id',
         [msg]
       );
-      // include the offset with the message
       io.emit('chat message', msg, result.rows[0].id);
     } catch (e) {
-      console.error('Error inserting message:', e);
-      return;
+      console.error('Error insertando mensaje:', e);
     }
   });
 
   socket.on('disconnect', () => {
-    console.log('Cliente desconectado:', socket.id);
+    console.log('Cliente desconectado');
   });
-  connectionStateRecovery: {
-
-  }
 });
 
-server.listen(3000, () => {
-  console.log('Server corriendo en http://localhost:3000');
-});
-
-// prep for deployment
-// DEFINE EL PUERTO UNA SOLA VEZ
+// 5. UN SOLO LISTEN (Esto evita el error ERR_SERVER_ALREADY_LISTEN)
 const PORT = process.env.PORT || 3000;
-
-// ESCUCHA UNA SOLA VEZ
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor Chatify corriendo en el puerto ${PORT}`);
+  console.log(`Servidor corriendo en el puerto ${PORT}`);
 });
